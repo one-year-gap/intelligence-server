@@ -46,8 +46,11 @@ body:
       description: "영역을 선택하세요."
       options:
         - "선택하세요"
+        - "🗂️ area: BE"
+        - "🖥️ area: FE"
         - "🗄️ area: DB"
         - "☁️ area: INFRA"
+        - "🔐 area: AUTH"
     validations:
       required: true
 
@@ -70,7 +73,11 @@ body:
       label: "Team (필수)"
       description: "team을 선택하세요."
       options:
-        - "Database Team"
+        - "Customer Team"
+        - "Counselor Team"
+        - "Admin Team"
+        - "Infra Team"
+        - "Auth Team"
   - type: input
     id: startDate
     attributes:
