@@ -4,6 +4,8 @@
 EFS 읽기 -> 매칭/집계 -> 결과 파일 저장까지 수행한다.
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_analyze_service
@@ -12,6 +14,7 @@ from app.schemas.analyze_response import AnalyzeResponse
 from app.services.analyze_service import AnalyzeService
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/analyze", response_model=AnalyzeResponse)
@@ -26,7 +29,8 @@ def analyze(
     try:
         accepted, message = service.analyze(payload)
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        logger.error(f"분석 요청 처리 실패 (requestId: {payload.request_id})", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="서버 내부 오류가 발생했습니다.") from exc
 
     if not accepted:
         return AnalyzeResponse(status="duplicated", requestId=payload.request_id, message=message)
