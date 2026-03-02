@@ -50,7 +50,7 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ## 4) 의존성 설치
 
 ```bash
-pip install fastapi "uvicorn[standard]"
+pip install -r requirements.txt
 ```
 
 ## 5) FastAPI 서버 실행
@@ -64,6 +64,12 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - API: http://127.0.0.1:8000
 - Swagger UI: http://127.0.0.1:8000/docs
 - ReDoc: http://127.0.0.1:8000/redoc
+
+## 7) 팀 문서
+
+- 시스템 플로우: `docs/FLOW.md`
+- Spring/FastAPI/EFS 연동 가이드: `docs/TEAM_API_EFS_GUIDE.md`
+- Team2 알고리즘 구현 가이드: `docs/TEAM2_KEYWORD_MAPPING_GUIDE.md`
 
 ---
 
