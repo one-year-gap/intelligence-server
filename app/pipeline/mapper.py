@@ -61,12 +61,14 @@ class ExactMapper:
             return []
 
         # 1순위: 표준 키워드(Canonical) 인덱스 매칭 검사 (가장 높은 우선순위)
-        if norm_text in self.canon_norm_index:
-            return self.canon_norm_index[norm_text]
+        match = self.canon_norm_index.get(norm_text)
+        if match:
+            return match
 
         # 2순위: 별칭(Alias) 인덱스 매칭 검사
-        if norm_text in self.alias_norm_index:
-            return self.alias_norm_index[norm_text]
+        match = self.alias_norm_index.get(norm_text)
+        if match:
+            return match
 
         # 완전 일치 항목이 없는 경우 빈 리스트 반환 (이후 파이프라인인 Stage 2 Aho-Corasick 단계로 이관)
         return []
