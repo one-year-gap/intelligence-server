@@ -13,6 +13,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any
+import gzip
 
 from app.core.config import Settings
 from app.core.constants import REQUEST_STATUS_COMPLETED, REQUEST_STATUS_FAILED
@@ -33,6 +34,7 @@ from app.services.idempotency_service import IdempotencyService
 from app.pipeline.mapper import ExactMapper
 from app.pipeline.extractor import AhoCorasickExtractor
 from app.pipeline.scorer import ContextScorer
+from app.pipeline.normalizer import normalize_with_offsets
 
 class AnalyzeService:
     def __init__(
@@ -48,54 +50,42 @@ class AnalyzeService:
         self.extractor = AhoCorasickExtractor()
         self.scorer = ContextScorer()
 
-        # 키워드 메타데이터 (ID -> 이름) 저장을 위한 딕셔너리 (3단계 중의성 해소용)
-        # 3단계 심사위원(Scorer)이 "요금"이라는 단어를 찾았을 때, 
-        # 후보인 BK-012의 진짜 이름이 "요금조회"라는 것을 알아야 문맥 점수를 매길 수 있음
-        # 그래서 { "BK-012": "요금조회" } 형식의 지도를 메모리에 들고 있는 것
-        self.keyword_meta: Dict[str, str] = {}
+        # Name을 동시에 저장하도록 구조 변경
+        # { "BK-100": {"id": 100, "name": "요금조회"} }
+        self.keyword_meta: Dict[str, Dict[str, Any]] = {}
 
-    def _initialize_pipeline(self, alias_records: list):
+    def _initialize_pipeline(self, alias_records: List[Any]): # AliasRecord 객체 리스트
         """
-        [사전 적재] EFS에서 읽어온 사전 데이터를 각 분석 엔진들에 장전
-        (job 1개당 1번만 실행됨)
+        [사전 적재] Pydantic 객체 데이터를 엔진들이 쓸 수 있는 리스트로 가공
         """
         dict_data_for_pipeline = []
         
         for record in alias_records:
-            # 1. 공통 정보 추출
-            label_id = str(record.get("label_id", ""))
-            if not label_id: continue
+            k_code = str(record.keyword_code)
             
-            schema = record.get("schema", "")
+            # 메타데이터에 실제 DB ID와 이름을 함께 저장
+            self.keyword_meta[k_code] = {
+                "id": record.business_keyword_id,
+                "name": record.keyword_name
+            }
             
-            # 2. 키워드(표준어) 정보 처리
-            if schema == "dict.keyword.v1":
-                canon_name = record.get("business_keyword", "")
-                # 심사위원용 메타데이터 등록
-                self.keyword_meta[label_id] = canon_name
-                
-                # 1단계(Mapper)와 2단계(Extractor)가 인식할 수 있는 형태로 변환
-                dict_data_for_pipeline.append({
-                    "schema": "dict.keyword.v1",
-                    "label_id": label_id,
-                    "business_keyword": canon_name
-                })
+            # 1단계/2단계용 데이터 포맷팅
+            dict_data_for_pipeline.append({
+                "schema": "dict.keyword.v1",
+                "label_id": k_code,
+                "business_keyword": record.keyword_name
+            })
 
-            # 3. 별칭(Alias) 정보 처리
-            elif schema == "dict.alias.v1":
-                alias_text = record.get("alias_text", "")
-                alias_norm = record.get("alias_norm", alias_text) # norm 없으면 text 사용
-                canon_name = record.get("business_keyword", "") # 표준어 명칭
-
+            for alias in record.aliases:
                 dict_data_for_pipeline.append({
                     "schema": "dict.alias.v1",
-                    "label_id": label_id,
-                    "business_keyword": canon_name,
-                    "alias_text": alias_text,
-                    "alias_norm": alias_norm
+                    "label_id": k_code,
+                    "business_keyword": record.keyword_name,
+                    "alias_text": alias.alias_text,
+                    "alias_norm": alias.alias_norm if alias.alias_norm else alias.alias_text
                 })
 
-        # 빌드된 통합 데이터를 엔진들에게 전송 (내부적으로 인덱스/오토마톤 생성)
+        # 가공된 데이터를 엔진들에게 전송
         self.mapper.build_index(dict_data_for_pipeline)
         self.extractor.build_automaton(dict_data_for_pipeline)
     
@@ -153,7 +143,8 @@ class AnalyzeService:
                 # chunk 입력(상담 JSONL gzip)을 읽어서 case 단위 결과로 변환
                 counsel_records = read_counsel_records(input_file)
                 results = self._build_results(request, counsel_records, alias_records, chunk_id)
-                write_result_records(mapping_path, results)
+                # write_result_records(mapping_path, results)
+                self._write_atomic(mapping_path, results, is_jsonl=True)
 
                 chunk_summary = self._build_chunk_summary(
                     request=request,
@@ -163,7 +154,8 @@ class AnalyzeService:
                     output_file=mapping_path,
                     record_count=len(results),
                 )
-                self._write_json_atomic(chunk_summary_path, chunk_summary)
+                # self._write_json_atomic(chunk_summary_path, chunk_summary)
+                self._write_atomic(chunk_summary_path, chunk_summary, is_jsonl=False)
 
                 processed_chunks += 1
                 total_records += len(results)
@@ -177,48 +169,62 @@ class AnalyzeService:
             self.idempotency.registry.update_status(request.request_id, REQUEST_STATUS_FAILED)
             raise
 
+    def _run_full_pipeline(self, text: str) -> List[Dict[str, Any]]:
+        """
+        [3단계 연쇄 반응] 
+        정규화 지도를 활용해 원문 위치를 보존하며 1->2->3단계를 실행
+        """
+        # 0. 기초 세팅: 분석용 정규화 텍스트와 위치 지도 생성
+        # norm_text: "u+ tv 안나와요" -> "utv안나와요"
+        # offset_map: [0, 3, 4, 6, 7, 8, 9] (각 글자가 원본의 몇 번째인지 기록)
+        norm_text, offset_map = normalize_with_offsets(text)
+        if not norm_text:
+            return []
+
+        # --- 1단계: 완전 일치 (Exact Match) ---
+        # 원문(text) 전체가 사전에 있는지 확인
+        step1_results = self.mapper.exact_match(text)
+        
+        # 1단계 결과 마스킹 (찾은 곳은 '*'로 가리기)
+        masked_raw = self._apply_masking(text, step1_results)
+
+        # --- 2단계: 부분 일치 (Aho-Corasick) ---
+        # 마스킹된 원문을 다시 정규화하여 2단계용 텍스트 생성
+        # (이미 1단계에서 찾은 부분은 정규화 결과에서도 '*'로 남거나 사라짐)
+        norm_masked, _ = normalize_with_offsets(masked_raw)
+      
+        step2_results = self.extractor.extract_keywords(norm_masked, offset_map)
+        
+        # 2단계 결과까지 합산하여 다시 마스킹
+        all_matches_so_far = step1_results + step2_results
+        masked_v2 = self._apply_masking(text, all_matches_so_far)
+
+        # --- 3단계: 오타 교정 및 중의성 해소 (Context Scorer) ---
+        doc = self.scorer.parse_document(text)
+        step3_results = self.scorer.rescue_typos(
+            doc=doc,
+            masked_text=masked_v2, # 1, 2단계가 모두 가려진 텍스트 전달
+            canon_index=self.mapper.canon_norm_index,
+            alias_index=self.mapper.alias_norm_index,
+            keyword_meta=self.keyword_meta
+        )
+
+        return step1_results + step2_results + step3_results
+
     def _build_results(self, request: AnalyzeRequest, counsel_records, alias_records, chunk_id: str) -> list[ResultRecord]:
         """
         상담 1건마다 키워드별 횟수를 계산해 결과 생성.
-        [핵심 파이프라인] 상담 내역을 한 줄씩 읽어 3단 콤보 분석을 수행합니다.
         """
         rows: list[ResultRecord] = []
         now = datetime.now(timezone.utc)
 
         for counsel in counsel_records:
-            # 상담 데이터 스키마에 맞춰 'text' 필드 추출
-            raw_text = counsel.get("text", "") 
-            if not raw_text: continue
-
-            # 1단계: 완전 일치 (Exact Match)
-            # "요금조회" 처럼 토시 하나 안틀린 경우 바로 캐치
-            step1_results = self.mapper.exact_match(raw_text)
+            # 수정: Pydantic 객체이므로 .get() 대신 속성으로 접근
+            # title과 question_text를 합쳐서 풍부한 문맥으로 분석
+            full_text = f"{counsel.title} {counsel.question_text}"
             
-            # 2단계 전 마스킹
-            masked_text_v1 = self._apply_masking(raw_text, step1_results)
-
-            # 2단계: 부분 일치 (Aho-Corasick)
-            # 문장 속에 숨어있는 키워드들을 한번에 훑어서 추출
-            step2_results = self.extractor.extract(masked_text_v1)
-            
-            # 3단계 전 마스킹
-            masked_text_v2 = self._apply_masking(masked_text_v1, step2_results)
-
-            # 3단계: 패자부활전 및 중의성 해소 (Context Scorer)
-            # spaCy 문법 지도는 딱 한 번만 생성
-            doc = self.scorer.parse_document(raw_text)
-            
-            # 오타 교정 및 중의성 판단 (요금조회 vs 요금납부)
-            step3_results = self.scorer.rescue_typos(
-                doc=doc,
-                masked_text=masked_text_v2,
-                canon_index=self.mapper.canon_norm_index,
-                alias_index=self.mapper.alias_norm_index,
-                keyword_meta=self.keyword_meta
-            )
-
-            # 모든 결과를 하나로 통합
-            all_matches = step1_results + step2_results + step3_results
+            # 3단계 파이프라인 통합 실행
+            all_matches = self._run_full_pipeline(full_text)
 
             # 결과 집계 (동일 키워드 카운팅)
             keyword_counts: Dict[str, int] = {}
@@ -227,27 +233,30 @@ class AnalyzeService:
                 keyword_counts[kid] = keyword_counts.get(kid, 0) + 1
 
             # 최종 스키마 변환
-            matched_records = [
-                KeywordCountRecord(
-                    businessKeywordId=0, # DB ID가 필요한 경우 keyword_meta 확장 필요
-                    keywordCode=kid,
-                    keywordName=self.keyword_meta.get(kid, "Unknown"),
-                    count=count
-                ) for kid, count in keyword_counts.items()
-            ]
+            matched_records = []
+            for k_code, count in keyword_counts.items():
+                # keyword_meta에서 실제 ID와 Name 추출
+                meta = self.keyword_meta.get(k_code, {"id": 0, "name": "Unknown"})
+                matched_records.append(
+                    KeywordCountRecord(
+                        businessKeywordId=meta["id"],
+                        keywordCode=k_code,
+                        keywordName=meta["name"],
+                        count=count
+                    )
+                )
 
             if matched_records:
                 rows.append(ResultRecord(
                     requestId=request.request_id,
                     jobInstanceId=request.job_instance_id,
                     chunkId=chunk_id,
-                    caseId=counsel.get("case_id"),
-                    memberId=counsel.get("memberId"),
+                    caseId=counsel.case_id,      # .case_id 속성 접근
+                    memberId=counsel.member_id,  # .member_id 속성 접근
                     matchedKeywords=matched_records,
                     analysisVersion=request.analysis_version,
                     processedAt=now
                 ))
-
         return rows
 
     def _build_search_text(self, title: str, question: str) -> str:
@@ -283,4 +292,34 @@ class AnalyzeService:
         tmp = path.with_suffix(path.suffix + ".tmp")
         with tmp.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
+        tmp.replace(path)
+
+    def _write_atomic(self, path: Path, data: Any, is_jsonl: bool = False) -> None:
+        """
+        [로컬 세이프 라이터] 
+        공용 infra 코드를 수정하지 않고, 우리 서비스에서 압축과 원자적 저장을 직접 처리
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        
+        # 파일 확장자가 .gz로 끝나면 gzip으로 열고, 아니면 일반 open으로 연다
+        is_gzip = path.name.endswith(".gz")
+        opener = gzip.open(tmp, "wt", encoding="utf-8") if is_gzip else tmp.open("w", encoding="utf-8")
+        
+        with opener as f:
+            if is_jsonl:
+                # 결과 데이터(List)를 한 줄씩 저장
+                for row in data:
+                    # mode='json'을 추가하여 날짜를 문자열로 자동 변환
+                    if hasattr(row, "model_dump"):
+                        d = row.model_dump(mode='json', by_alias=True)
+                    else:
+                        d = row
+                    
+                    # 혹시 모를 상황을 대비해 default=str을 넣어주면 더 안전
+                    f.write(json.dumps(d, ensure_ascii=False, default=str) + "\n")
+            else:
+                # 요약 데이터 저장 시에도 날짜가 있을 수 있으므로 default=str 추가
+                json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+        
         tmp.replace(path)
