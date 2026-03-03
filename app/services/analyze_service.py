@@ -12,6 +12,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import List, Dict, Any
 
 from app.core.config import Settings
 from app.core.constants import REQUEST_STATUS_COMPLETED, REQUEST_STATUS_FAILED
@@ -29,6 +30,9 @@ from app.schemas.analyze_request import AnalyzeRequest
 from app.schemas.result_record import KeywordCountRecord, ResultRecord
 from app.services.idempotency_service import IdempotencyService
 
+from app.pipeline.mapper import ExactMapper
+from app.pipeline.extractor import AhoCorasickExtractor
+from app.pipeline.scorer import ContextScorer
 
 class AnalyzeService:
     def __init__(
@@ -39,6 +43,73 @@ class AnalyzeService:
         self.settings = settings
         self.idempotency = idempotency
 
+        # 1, 2, 3단계 엔진 초기화
+        self.mapper = ExactMapper()
+        self.extractor = AhoCorasickExtractor()
+        self.scorer = ContextScorer()
+
+        # 키워드 메타데이터 (ID -> 이름) 저장을 위한 딕셔너리 (3단계 중의성 해소용)
+        # 3단계 심사위원(Scorer)이 "요금"이라는 단어를 찾았을 때, 
+        # 후보인 BK-012의 진짜 이름이 "요금조회"라는 것을 알아야 문맥 점수를 매길 수 있음
+        # 그래서 { "BK-012": "요금조회" } 형식의 지도를 메모리에 들고 있는 것
+        self.keyword_meta: Dict[str, str] = {}
+
+    def _initialize_pipeline(self, alias_records: list):
+        """
+        [사전 적재] EFS에서 읽어온 사전 데이터를 각 분석 엔진들에 장전
+        (job 1개당 1번만 실행됨)
+        """
+        dict_data_for_pipeline = []
+        
+        for record in alias_records:
+            # 1. 공통 정보 추출
+            label_id = str(record.get("label_id", ""))
+            if not label_id: continue
+            
+            schema = record.get("schema", "")
+            
+            # 2. 키워드(표준어) 정보 처리
+            if schema == "dict.keyword.v1":
+                canon_name = record.get("business_keyword", "")
+                # 심사위원용 메타데이터 등록
+                self.keyword_meta[label_id] = canon_name
+                
+                # 1단계(Mapper)와 2단계(Extractor)가 인식할 수 있는 형태로 변환
+                dict_data_for_pipeline.append({
+                    "schema": "dict.keyword.v1",
+                    "label_id": label_id,
+                    "business_keyword": canon_name
+                })
+
+            # 3. 별칭(Alias) 정보 처리
+            elif schema == "dict.alias.v1":
+                alias_text = record.get("alias_text", "")
+                alias_norm = record.get("alias_norm", alias_text) # norm 없으면 text 사용
+                canon_name = record.get("business_keyword", "") # 표준어 명칭
+
+                dict_data_for_pipeline.append({
+                    "schema": "dict.alias.v1",
+                    "label_id": label_id,
+                    "business_keyword": canon_name,
+                    "alias_text": alias_text,
+                    "alias_norm": alias_norm
+                })
+
+        # 빌드된 통합 데이터를 엔진들에게 전송 (내부적으로 인덱스/오토마톤 생성)
+        self.mapper.build_index(dict_data_for_pipeline)
+        self.extractor.build_automaton(dict_data_for_pipeline)
+    
+    def _apply_masking(self, text: str, matches: List[Dict[str, Any]]) -> str:
+        """
+        [마스킹 기술] 이미 찾은 단어 위치를 '*'로 가려 다음 단계의 중복 추출을 방지
+        """
+        chars = list(text)
+        for m in matches:
+            for i in range(m["orig_start"], m["orig_end"] + 1):
+                if i < len(chars):
+                    chars[i] = "*"
+        return "".join(chars)
+    
     def analyze(self, request: AnalyzeRequest) -> tuple[bool, str]:
         """jobInstanceId 하위 모든 chunk를 처리"""
         # 같은 requestId가 다시 들어오면 중복 처리하지 않음
@@ -56,6 +127,9 @@ class AnalyzeService:
             if not alias_path.exists():
                 raise FileNotFoundError(f"alias dictionary not found: {alias_path}")
             alias_records = read_alias_records(alias_path)
+
+            # 모든 Chunk가 이 준비된 엔진을 공유해서 사용
+            self._initialize_pipeline(alias_records)
 
             input_files = list_chunk_inputs(req_dir)
             processed_chunks = 0
@@ -104,63 +178,75 @@ class AnalyzeService:
             raise
 
     def _build_results(self, request: AnalyzeRequest, counsel_records, alias_records, chunk_id: str) -> list[ResultRecord]:
-        """상담 1건마다 키워드별 횟수를 계산해 결과 생성."""
+        """
+        상담 1건마다 키워드별 횟수를 계산해 결과 생성.
+        [핵심 파이프라인] 상담 내역을 한 줄씩 읽어 3단 콤보 분석을 수행합니다.
+        """
         rows: list[ResultRecord] = []
         now = datetime.now(timezone.utc)
 
-        # alias 사전을 정규식 목록으로 미리 컴파일해, 상담 루프에서 재사용
-        keyword_patterns: list[tuple[int, str, str, list[re.Pattern[str]]]] = []
-        for alias_record in alias_records:
-            patterns: list[re.Pattern[str]] = []
-            for alias in alias_record.aliases:
-                text = (alias.alias_norm or alias.alias_text).strip()
-                if not text:
-                    continue
-                # 대소문자 무시하고 단순 부분문자열 카운트
-                patterns.append(re.compile(re.escape(text), flags=re.IGNORECASE))
+        for counsel in counsel_records:
+            # 상담 데이터 스키마에 맞춰 'text' 필드 추출
+            raw_text = counsel.get("text", "") 
+            if not raw_text: continue
 
-            keyword_patterns.append(
-                (
-                    alias_record.business_keyword_id,
-                    alias_record.keyword_code,
-                    alias_record.keyword_name,
-                    patterns,
-                )
+            # 1단계: 완전 일치 (Exact Match)
+            # "요금조회" 처럼 토시 하나 안틀린 경우 바로 캐치
+            step1_results = self.mapper.exact_match(raw_text)
+            
+            # 2단계 전 마스킹
+            masked_text_v1 = self._apply_masking(raw_text, step1_results)
+
+            # 2단계: 부분 일치 (Aho-Corasick)
+            # 문장 속에 숨어있는 키워드들을 한번에 훑어서 추출
+            step2_results = self.extractor.extract(masked_text_v1)
+            
+            # 3단계 전 마스킹
+            masked_text_v2 = self._apply_masking(masked_text_v1, step2_results)
+
+            # 3단계: 패자부활전 및 중의성 해소 (Context Scorer)
+            # spaCy 문법 지도는 딱 한 번만 생성
+            doc = self.scorer.parse_document(raw_text)
+            
+            # 오타 교정 및 중의성 판단 (요금조회 vs 요금납부)
+            step3_results = self.scorer.rescue_typos(
+                doc=doc,
+                masked_text=masked_text_v2,
+                canon_index=self.mapper.canon_norm_index,
+                alias_index=self.mapper.alias_norm_index,
+                keyword_meta=self.keyword_meta
             )
 
-        for counsel in counsel_records:
-            # title/question를 합쳐 한 번에 검색
-            text = self._build_search_text(counsel.title, counsel.question_text)
-            keyword_counts: list[KeywordCountRecord] = []
+            # 모든 결과를 하나로 통합
+            all_matches = step1_results + step2_results + step3_results
 
-            for keyword_id, keyword_code, keyword_name, patterns in keyword_patterns:
-                count = 0
-                for pattern in patterns:
-                    # 같은 키워드에 여러 alias가 있으면 합산 카운트
-                    count += len(pattern.findall(text))
+            # 결과 집계 (동일 키워드 카운팅)
+            keyword_counts: Dict[str, int] = {}
+            for m in all_matches:
+                kid = m["keyword_id"]
+                keyword_counts[kid] = keyword_counts.get(kid, 0) + 1
 
-                if count > 0:
-                    keyword_counts.append(
-                        KeywordCountRecord(
-                            businessKeywordId=keyword_id,
-                            keywordCode=keyword_code,
-                            keywordName=keyword_name,
-                            count=count,
-                        )
-                    )
+            # 최종 스키마 변환
+            matched_records = [
+                KeywordCountRecord(
+                    businessKeywordId=0, # DB ID가 필요한 경우 keyword_meta 확장 필요
+                    keywordCode=kid,
+                    keywordName=self.keyword_meta.get(kid, "Unknown"),
+                    count=count
+                ) for kid, count in keyword_counts.items()
+            ]
 
-            rows.append(
-                ResultRecord(
+            if matched_records:
+                rows.append(ResultRecord(
                     requestId=request.request_id,
                     jobInstanceId=request.job_instance_id,
                     chunkId=chunk_id,
-                    caseId=counsel.case_id,
-                    memberId=counsel.member_id,
-                    matchedKeywords=keyword_counts,
+                    caseId=counsel.get("case_id"),
+                    memberId=counsel.get("memberId"),
+                    matchedKeywords=matched_records,
                     analysisVersion=request.analysis_version,
-                    processedAt=now,
-                )
-            )
+                    processedAt=now
+                ))
 
         return rows
 
