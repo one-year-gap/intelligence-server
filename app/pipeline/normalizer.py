@@ -1,50 +1,44 @@
 import re
+from typing import Tuple, List
 
 def normalize(raw_text: str) -> str:
-    """
-    원문 텍스트를 분석용(alias_norm) 정규화 텍스트로 변환
-    (Spring Boot의 KeywordNormalizer.java 와 100% 동일한 규칙 적용)
-    
-    Args:
-        raw_text (str): 고객이 입력한 원문 상담 텍스트 또는 사전의 원문 별칭
-        
-    Returns:
-        str: 특수문자와 공백이 제거되고 소문자로 통일된 문자열
-    """
-    
-    # 1. Null 체크 및 빈 문자열(공백만 있는 경우 포함) 체크
-    # 파이썬에서는 not raw_text 로 None이나 "" 처리가 가능하고, 
-    # strip()을 써서 공백만 있는 경우(Java의 isBlank)를 걸러냄
+    # 인덱스 구축용 정규화
     if not raw_text or not raw_text.strip():
         return ""
-
-    # 2. 소문자 통일 (예: U+tv -> u+tv, VIP -> vip)
-    # 파이썬의 lower() 함수는 자바의 toLowerCase()와 완벽히 똑같이 동작
     normalized = raw_text.lower()
+    return re.sub(r'[^a-z0-9가-힣]', '', normalized)
 
-    # 3. 특수문자 및 공백 제거 (한글, 영문 소문자, 숫자만 남김)
-    # 정규식 패턴 [^a-z0-9가-힣] 의 의미:
-    #   ^ : '아닌 것' (Not)
-    #   a-z : 영문 소문자
-    #   0-9 : 숫자
-    #   가-힣 : 완성형 한글
-    # 즉, 위 조건에 해당하지 않는 모든 기호(!, ?, 공백 등)를 찾아 ''(빈 문자열)로 교체
-    normalized = re.sub(r'[^a-z0-9가-힣]', '', normalized)
+def normalize_with_offsets(raw_text: str) -> Tuple[str, List[int]]:
+    """
+    고객 텍스트 분석용 정규화 + 원본 위치 추적 지도(Offset Map) 생성
+    
+    Returns:
+        Tuple[정규화된 문자열, 원본 인덱스 리스트]
+    """
+    if not raw_text or not raw_text.strip():
+        return "", []
 
-    return normalized
+    normalized_chars = []
+    offset_map = []  # 정규화된 글자가 원본의 몇 번째 인덱스인지 기록하는 지도
+    
+    lower_text = raw_text.lower()
+    
+    # 원문 글자를 하나씩 돌면서 검사
+    for i, char in enumerate(lower_text):
+        # 정규식 패턴에 맞는(허용된) 글자일 때만
+        if re.match(r'[a-z0-9가-힣]', char):
+            normalized_chars.append(char) # 정규화 결과에 추가
+            offset_map.append(i)          # 이 글자의 원본 인덱스를 지도에 기록
+            
+    normalized_text = "".join(normalized_chars)
+    return normalized_text, offset_map
 
-
-# 간단 테스트 공간
+# 테스트
 if __name__ == "__main__":
-    
-    test_cases = [
-        "U+tv 스마트 홈",      # 대소문자 섞임 + 특수기호 + 공백
-        "  VIP 콕 혜택!!!  ",   # 양옆 공백 + 느낌표
-        "요금조회 안됨ㅠㅠ",    # 한글 자음/모음(ㅠㅠ)은 정규식에 없으므로 날아감
-        "",                    # 빈 문자열
-        None                   # Null 값
-    ]
-    
-    for text in test_cases:
-        result = normalize(text)
-        print(f"원문: '{text}'  ➔  정규화: '{result}'")
+    raw = "u+ TV 안나와요"
+    norm, offsets = normalize_with_offsets(raw)
+    print(f"원문: '{raw}'")
+    print(f"정규화: '{norm}'")
+    print(f"위치 지도: {offsets}")
+    # 출력 예측: [0, 3, 4, 6, 7, 8, 9] 
+    # (u=0, t=3, v=4, 안=6 ... -> 중간의 '+'와 '공백' 인덱스가 건너뛰어짐)
