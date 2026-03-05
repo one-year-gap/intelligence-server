@@ -70,11 +70,12 @@ class ExactMapper:
             matched_ids = match
             source = "CANON"
 
-        # 2순위: 별칭(Alias) 인덱스 매칭 검사
-        match = self.alias_norm_index.get(norm_text)
-        if match:
-            matched_ids = match
-            source = "ALIAS"
+        else:
+            # 2순위: 별칭(Alias) 인덱스 매칭 검사
+            match = self.alias_norm_index.get(norm_text)
+            if match:
+                matched_ids = match
+                source = "ALIAS"
 
         # 완전 일치 항목이 없는 경우 빈 리스트 반환 (이후 파이프라인인 Stage 2 Aho-Corasick 단계로 이관)
         if not matched_ids:
