@@ -1,4 +1,5 @@
 import spacy
+import itertools
 from typing import List, Dict, Any
 # rapidfuzz: C++ 기반의 초고속 문자열 비교 라이브러리
 from rapidfuzz.distance import DamerauLevenshtein
@@ -129,7 +130,8 @@ class ContextScorer:
 
             # [핵심 로직 2] 다메라우 연산 (rapidfuzz 활용 오타 검사)
             # O(1)에서 실패했으니, 이제 진짜 오타인지 단어장을 돌면서 검사
-            for dict_word, label_ids in canon_index.items():
+            # itertools.chain을 사용해 표준 키워드(canon)와 별칭(alias) 단어장을 이어서 순회
+            for dict_word, label_ids in itertools.chain(canon_index.items(), alias_index.items()):
                 # DamerauLevenshtein: 글자 바뀜, 순서 바뀜 등을 C++ 엔진으로 초고속 계산
                 # 거리 1 = 1글자만 틀린 오타
                 if DamerauLevenshtein.distance(noun_text, dict_word) == 1:
