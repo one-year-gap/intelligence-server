@@ -1,0 +1,10 @@
+"""애플리케이션 공통 상수."""
+
+COUNSEL_FILE_SUFFIX = ".jsonl"
+ALIAS_FILE_SUFFIX = ".jsonl"
+RESULT_FILE_SUFFIX = ".jsonl"
+AGGREGATE_FILE_SUFFIX = ".jsonl"
+
+REQUEST_STATUS_PROCESSING = "processing"
+REQUEST_STATUS_COMPLETED = "completed"
+REQUEST_STATUS_FAILED = "failed"

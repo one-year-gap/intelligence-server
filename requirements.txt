@@ -1,0 +1,7 @@
+fastapi==0.115.8
+uvicorn[standard]==0.34.0
+pydantic==2.10.6
+pydantic-settings==2.8.0
+spacy>=3.7.0        
+pyahocorasick>=2.0.0  
+rapidfuzz>=3.6.0     
