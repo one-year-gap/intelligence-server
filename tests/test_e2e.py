@@ -104,11 +104,32 @@ def test_analyze_e2e():
     result_file = test_efs_base / "analysis" / "res" / job_id / "chunk-01.mapping.jsonl.gz"
     assert result_file.exists(), "결과 파일이 생성되지 않았습니다!"
 
-    # 압축된 결과 파일 열어서 내용 확인
+    # 압축된 결과 파일 열어서 실제 분석 내용 검증 
     with gzip.open(result_file, "rt", encoding="utf-8") as f:
-        print("\n--- 최종 분석 결과 파일 내용 ---")
-        for line in f:
-            print(line.strip())
+        print("\n--- 최종 분석 결과 파일 내용 및 검증 ---")
+        
+        # 파일 내용을 한 줄씩 읽어서 파이썬 딕셔너리로 변환
+        results = [json.loads(line) for line in f]
+
+        # 터미널에서 파일 내용 확인
+        print("[생성된 파일 내용]")
+        for i, res_dict in enumerate(results):
+            print(f"[{i+1}번째 기록]")
+            print(json.dumps(res_dict, ensure_ascii=False, indent=2))
+        print("-" * 40)
+        
+        # 1. 2개의 상담 데이터를 넣었으니, 결과도 2개가 나와야 함
+        assert len(results) == 2, f"예상한 결과 갯수(2)와 다름: {len(results)}"
+        
+        # 2. 첫 번째 상담("요금조회 해주세요") 검증
+        # -> BK-100 키워드가 매칭되어야 함
+        assert results[0]["matchedKeywords"][0]["keywordCode"] == "BK-100", "첫 번째 데이터 분석 실패"
+        print(f"검증 통과: Case 1 매핑 결과 - {results[0]['matchedKeywords'][0]['keywordCode']}")
+        
+        # 3. 두 번째 상담("선텍약정 얼마에요" - 오타) 검증
+        # -> 패자부활전(Fallback)을 통해 BK-200 키워드가 매칭되어야 함
+        assert results[1]["matchedKeywords"][0]["keywordCode"] == "BK-200", "두 번째 데이터 분석 실패 (오타 교정 실패)"
+        print(f"검증 통과: Case 2 매핑 결과 - {results[1]['matchedKeywords'][0]['keywordCode']}")
 
 if __name__ == "__main__":
     test_analyze_e2e()
