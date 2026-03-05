@@ -82,7 +82,7 @@ class AnalyzeService:
                     "label_id": k_code,
                     "business_keyword": record.keyword_name,
                     "alias_text": alias.alias_text,
-                    "alias_norm": alias.alias_norm if alias.alias_norm else alias.alias_text
+                    "alias_norm": alias.alias_norm or alias.alias_text
                 })
 
         # 가공된 데이터를 엔진들에게 전송
@@ -142,7 +142,7 @@ class AnalyzeService:
 
                 # chunk 입력(상담 JSONL gzip)을 읽어서 case 단위 결과로 변환
                 counsel_records = read_counsel_records(input_file)
-                results = self._build_results(request, counsel_records, alias_records, chunk_id)
+                results = self._build_results(request, counsel_records, chunk_id)
                 # write_result_records(mapping_path, results)
                 self._write_atomic(mapping_path, results, is_jsonl=True)
 
@@ -205,13 +205,12 @@ class AnalyzeService:
             doc=doc,
             masked_text=masked_v2, # 1, 2단계가 모두 가려진 텍스트 전달
             canon_index=self.mapper.canon_norm_index,
-            alias_index=self.mapper.alias_norm_index,
-            keyword_meta=self.keyword_meta
+            alias_index=self.mapper.alias_norm_index
         )
 
         return step1_results + step2_results + step3_results
 
-    def _build_results(self, request: AnalyzeRequest, counsel_records, alias_records, chunk_id: str) -> list[ResultRecord]:
+    def _build_results(self, request: AnalyzeRequest, counsel_records, chunk_id: str) -> list[ResultRecord]:
         """
         상담 1건마다 키워드별 횟수를 계산해 결과 생성.
         """

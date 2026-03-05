@@ -71,7 +71,7 @@ class ContextScorer:
                 
         return best_candidate
 
-    def rescue_typos(self, doc: spacy.tokens.Doc, masked_text: str, canon_index: Dict[str, List[str]], alias_index: Dict[str, List[str]], keyword_meta: Dict[str, Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def rescue_typos(self, doc: spacy.tokens.Doc, masked_text: str, canon_index: Dict[str, List[str]], alias_index: Dict[str, List[str]]) -> List[Dict[str, Any]]:
         """
         [패자부활전 로직] 
         지배인이 1,2단계에서 찾은 단어를 '*'로 마스킹(Masking)한 문장(masked_text)을 받는다.
