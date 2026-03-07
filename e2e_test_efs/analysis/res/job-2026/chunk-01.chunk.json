@@ -6,7 +6,7 @@
   "inputFile": "C:\\Users\\LG\\Desktop\\holliverse\\counseling-analytics\\e2e_test_efs\\analysis\\req\\job-2026\\chunk-01.input.jsonl.gz",
   "manifestFile": null,
   "outputFile": "C:\\Users\\LG\\Desktop\\holliverse\\counseling-analytics\\e2e_test_efs\\analysis\\res\\job-2026\\chunk-01.mapping.jsonl.gz",
-  "recordCount": 2,
+  "recordCount": 3,
   "status": "processed",
-  "processedAt": "2026-03-05T10:54:44.449419+00:00"
+  "processedAt": "2026-03-07T08:38:58.861859+00:00"
 }

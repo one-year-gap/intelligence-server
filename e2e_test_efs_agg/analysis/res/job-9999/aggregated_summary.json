@@ -1,0 +1,30 @@
+[
+  {
+    "memberId": 10,
+    "topKeywords": [
+      {
+        "businessKeywordId": 100,
+        "keywordCode": "BK-100",
+        "keywordName": "요금조회",
+        "totalCount": 3
+      },
+      {
+        "businessKeywordId": 300,
+        "keywordCode": "BK-300",
+        "keywordName": "결합할인",
+        "totalCount": 1
+      }
+    ]
+  },
+  {
+    "memberId": 20,
+    "topKeywords": [
+      {
+        "businessKeywordId": 100,
+        "keywordCode": "BK-100",
+        "keywordName": "요금조회",
+        "totalCount": 1
+      }
+    ]
+  }
+]
