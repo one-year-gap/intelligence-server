@@ -67,6 +67,7 @@ async def _generate_recommendation_reasons(
                 if len(processed_reasons) < len(product_names):
                     processed_reasons.extend(
                         ["프로필과 유사한 상품입니다."] * (len(product_names) - len(processed_reasons))
+                    )
                 return processed_reasons[: len(product_names)]
     except (json.JSONDecodeError, KeyError, IndexError) as e:
         logging.warning("LLM 추천 이유 파싱 실패, 기본 문구 사용: %s", e, exc_info=True)

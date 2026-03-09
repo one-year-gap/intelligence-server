@@ -31,7 +31,6 @@ class AnalysisRepository:
          AND ca.analyzer_version = ip.analyzer_version
         JOIN support_case sc
           ON sc.case_id = ca.case_id
-        WHERE ca.analysis_status = 'IN_PROGRESS'::analysis_status
         """
         async with self._pool.acquire() as conn:
             return await conn.fetch(sql, case_ids, analyzer_versions)

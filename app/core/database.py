@@ -15,11 +15,12 @@ settings = get_settings()
 
 
 def create_engine() -> AsyncEngine:
+    database_url = settings.effective_database_url
     connect_args = {}
     if settings.database_ssl:
         connect_args["ssl"] = True  # RDS 환경에서 SSL
     return create_async_engine(
-        settings.database_url,
+        database_url,
         pool_pre_ping=True,
         future=True,
         connect_args=connect_args,
@@ -30,7 +31,7 @@ def create_engine() -> AsyncEngine:
 engine: AsyncEngine | None = None
 SessionLocal: async_sessionmaker[AsyncSession] | None = None
 
-if (settings.database_url or "").strip():
+if (settings.effective_database_url or "").strip():
     engine = create_engine()
     # pgvector 등록: asyncpg 연결 시 vector 타입 등록
     @event.listens_for(engine.sync_engine, "connect")
@@ -48,7 +49,10 @@ if (settings.database_url or "").strip():
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     if SessionLocal is None:
-        raise RuntimeError("Database is not configured. Set DATABASE_URL.")
+        raise RuntimeError(
+            "Database is not configured. "
+            "Set DATABASE_URL/DB_URL or POSTGRES_HOST/POSTGRES_PORT/POSTGRES_DB/POSTGRES_USER/POSTGRES_PASSWORD."
+        )
     async with SessionLocal() as session:
         yield session
 

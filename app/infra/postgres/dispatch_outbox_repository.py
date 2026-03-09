@@ -12,7 +12,8 @@ class DispatchOutboxRepository:
         sql = """
         UPDATE analysis_dispatch_outbox
         SET
-            status = 'ACKED'::dispatch_outbox_status,
+            dispatch_status = 'ACKED'::dispatch_status,
+            analysis_status = 'READY'::analysis_status,
             updated_at = NOW()
         WHERE request_id = ANY($1::text[])
         RETURNING request_id
