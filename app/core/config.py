@@ -16,11 +16,11 @@ class Settings(BaseSettings):
     database_ssl: bool = False
 
     openai_api_key: str = ""
-    openai_chat_model : str = "gpt-4o-mini"
-    openai_embedding_model : str = "text-embedding-3-small"
+    openai_chat_model: str = "gpt-4o-mini"
+    openai_embedding_model: str = "text-embedding-3-small"
 
-    recommend_top_k : int = 3
-    cache_ttl_days : int = 7
+    recommend_top_k: int = 3
+    cache_ttl_days: int = 7
 
     # 실제 운영 => EFS 마운트 경로를 지정
     efs_base_dir: Path = Path("./data/efs")

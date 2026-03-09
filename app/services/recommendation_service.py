@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 
 from openai import AsyncOpenAI
@@ -61,15 +62,14 @@ async def _generate_recommendation_reasons(
         if m:
             data = json.loads(m.group())
             reasons = data.get("reasons") or []
-            if isinstance(reasons, list) and len(reasons) >= len(product_names):
-                return [str(r).strip() or "프로필과 유사한 상품입니다." for r in reasons[: len(product_names)]]
             if isinstance(reasons, list):
-                padded = [str(r).strip() or "프로필과 유사한 상품입니다." for r in reasons]
-                while len(padded) < len(product_names):
-                    padded.append("프로필과 유사한 상품입니다.")
-                return padded[: len(product_names)]
-    except (json.JSONDecodeError, KeyError, IndexError):
-        pass
+                processed_reasons = [str(r).strip() or "프로필과 유사한 상품입니다." for r in reasons]
+                if len(processed_reasons) < len(product_names):
+                    processed_reasons.extend(
+                        ["프로필과 유사한 상품입니다."] * (len(product_names) - len(processed_reasons))
+                return processed_reasons[: len(product_names)]
+    except (json.JSONDecodeError, KeyError, IndexError) as e:
+        logging.warning("LLM 추천 이유 파싱 실패, 기본 문구 사용: %s", e, exc_info=True)
     return ["프로필과 유사한 상품입니다."] * len(product_names)
 
 
@@ -114,8 +114,6 @@ async def get_recommendation(
             profile_text.strip(),
             product_names,
         )
-        if len(reasons) < len(product_ids):
-            reasons = reasons + ["프로필과 유사한 상품입니다."] * (len(product_ids) - len(reasons))
         recommended_products = [
             RecommendedProductItem(product_id=pid, reason=reasons[i])
             for i, pid in enumerate(product_ids)

@@ -164,19 +164,21 @@ async def update_embedding_texts(
     각 상품의 embedding_text를 DB product 테이블에 반영. product_id, embedding_text 키 필요.
     반환: 업데이트한 행 수.
     """
-    count = 0
-    for p in products:
-        pid = p.get("product_id")
-        txt = p.get("embedding_text")
-        if pid is None:
-            continue
-        await session.execute(
-            UPDATE_EMBEDDING_TEXT_SQL,
-            {"pid": pid, "txt": txt if txt is not None else ""},
-        )
-        count += 1
+    if not products:
+        return 0
+
+    update_params = [
+        {"pid": p.get("product_id"), "txt": p.get("embedding_text") or ""}
+        for p in products
+        if p.get("product_id") is not None
+    ]
+    
+    if not update_params:
+        return 0
+
+    result = await session.execute(UPDATE_EMBEDDING_TEXT_SQL, update_params)
     await session.commit()
-    return count
+    return result.rowcount
 
 
 def _row_to_normalized(row: Any) -> dict[str, Any]:

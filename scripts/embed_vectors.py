@@ -14,7 +14,7 @@ _ROOT_DIR = os.path.dirname(_SCRIPT_DIR)
 if _ROOT_DIR not in sys.path:
     sys.path.insert(0, _ROOT_DIR)
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -64,13 +64,27 @@ async def fetch_products_with_embedding_text(session: AsyncSession) -> list[dict
     return [{"product_id": r[0], "embedding_text": r[1]} for r in rows]
 
 
-def get_embeddings_batch(client: OpenAI, texts: list[str], model: str) -> list[list[float]]:
-    """OpenAI embedding API 호출. texts 순서와 동일한 벡터 리스트 반환."""
+async def get_embeddings_batch(
+    client: AsyncOpenAI, texts: list[str], model: str
+) -> list[list[float]]:
+    """OpenAI embedding API 비동기 호출. texts 순서와 동일한 벡터 리스트 반환."""
     if not texts:
         return []
-    resp = client.embeddings.create(model=model, input=texts)
+    resp = await client.embeddings.create(model=model, input=texts)
     order = {e.index: e.embedding for e in resp.data}
     return [order[i] for i in range(len(texts))]
+
+
+def _build_bulk_update_vectors_sql(num_rows: int) -> str:
+    """num_rows개 행을 한 번에 UPDATE하기 위한 VALUES 절 생성."""
+    values = ", ".join(
+        f"(:pid_{i}, :vec_{i}::vector)" for i in range(num_rows)
+    )
+    return (
+        "UPDATE product AS p SET embedding_vector = v.vec FROM (VALUES "
+        + values
+        + ") AS v(pid, vec) WHERE p.product_id = v.pid"
+    )
 
 
 async def update_embedding_vectors(
@@ -78,23 +92,27 @@ async def update_embedding_vectors(
     product_id_and_vectors: list[tuple[int, list[float]]],
 ) -> int:
     """
-    product_id별 embedding_vector UPDATE. 벡터는 list[float]로 전달.
-    database.py에서 register_vector 등록된 연결이므로 list를 그대로 바인딩.
+    product_id별 embedding_vector를 한 번의 execute로 일괄 UPDATE.
+    벡터는 list[float]로 전달. database.py에서 register_vector 등록된 연결 사용.
     """
-    update_sql = text(
-        "UPDATE product SET embedding_vector = :vec WHERE product_id = :pid"
-    )
-    count = 0
-    for pid, vec in product_id_and_vectors:
-        await session.execute(update_sql, {"pid": pid, "vec": vec})
-        count += 1
+    if not product_id_and_vectors:
+        return 0
+
+    n = len(product_id_and_vectors)
+    update_sql = text(_build_bulk_update_vectors_sql(n))
+    params = {}
+    for i, (pid, vec) in enumerate(product_id_and_vectors):
+        params[f"pid_{i}"] = pid
+        params[f"vec_{i}"] = vec
+
+    result = await session.execute(update_sql, params)
     await session.commit()
-    return count
+    return result.rowcount
 
 
 async def main() -> None:
     settings = get_settings()
-    client = OpenAI(api_key=settings.openai_api_key)
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
     model = settings.openai_embedding_model
 
     async with SessionLocal() as session:
@@ -121,7 +139,7 @@ async def main() -> None:
             continue
         pids = [x[0] for x in to_embed]
         texts_only = [x[1] for x in to_embed]
-        vectors = get_embeddings_batch(client, texts_only, model)
+        vectors = await get_embeddings_batch(client, texts_only, model)
         id_vec_pairs = list(zip(pids, vectors))
 
         async with SessionLocal() as session:
