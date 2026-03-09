@@ -1,0 +1,10 @@
+# 앱만 띄움. DB/Kafka는 Java 레포 또는 외부에서 제공
+services:
+  app:
+    build: .
+    image: python-server:latest
+    container_name: python-server
+    ports:
+      - "8035:8000"
+    env_file: .env
+    restart: "no"

@@ -1,5 +1,29 @@
+# IDE 
 .idea
-.venv
-.env
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Environment
+.venv
+.env
+
+# Logs 
+*.log
+logs/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+
+# E2E test data (keep out of git)
+e2e_test_efs/**

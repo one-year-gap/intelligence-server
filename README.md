@@ -1,5 +1,5 @@
 # counseling-analytics
-
+하이
 FastAPI 개발 서버 실행 가이드입니다.
 
 ## Prerequisites
@@ -56,7 +56,13 @@ pip install -r requirements.txt
 ## 5) FastAPI 서버 실행
 
 ```bash
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn app.realtime.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+## 5-1) 배치 1회 실행
+
+```bash
+python -m app.batch.main
 ```
 
 ## 6) 접속 확인
