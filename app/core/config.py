@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     kafka_auto_offset_reset: str = "earliest"
     kafka_batch_size: int = 1000
     kafka_poll_timeout_ms: int = 1000
+    kafka_log_each_message: bool = False
+    kafka_log_result_limit: int = 20
 
     # PostgreSQL connection for bulk lookup
     postgres_dsn: str = Field(default="", validation_alias=AliasChoices("POSTGRES_DSN", "DB_DSN"))
