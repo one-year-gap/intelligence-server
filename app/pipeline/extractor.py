@@ -66,11 +66,20 @@ class AhoCorasickExtractor:
         self.is_built = True
 
     def _add_to_automaton(self, text: str, payload: Dict[str, Any]):
-        """내부 헬퍼 함수: 다중 충돌(하나의 단어가 여러 ID를 가짐)을 안전하게 처리하며 오토마톤에 추가"""
+        """내부 헬퍼 함수: 다중 충돌(하나의 단어가 여러 ID를 가짐)을 안전하게 처리하며, 동일한 키워드 ID에 대한 중복 등록 방지"""
         if self.automaton.exists(text):
             existing_payloads = self.automaton.get(text)
-            existing_payloads.append(payload)
-            self.automaton.add_word(text, existing_payloads) # 덮어쓰기
+            
+            # 이미 똑같은 keyword_id 꼬리표가 달려있으면 추가하지 않고 무시
+            is_duplicate = False
+            for existing_payload in existing_payloads:
+                if existing_payload["keyword_id"] == payload["keyword_id"]:
+                    is_duplicate = True
+                    break
+                    
+            if not is_duplicate:
+                existing_payloads.append(payload)
+                self.automaton.add_word(text, existing_payloads) # 덮어쓰기
         else:
             self.automaton.add_word(text, [payload]) # 리스트 형태로 첫 등록
 
