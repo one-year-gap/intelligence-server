@@ -3,3 +3,6 @@
 .env
 __pycache__/
 *.pyc
+
+# E2E test data (keep out of git)
+e2e_test_efs/**
