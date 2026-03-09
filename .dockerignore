@@ -11,3 +11,8 @@ __pycache__
 .env
 tests
 README.md
+node_modules
+package-lock.json
+pnpm-lock.yaml
+e2e_test_efs
+e2e_test_efs_agg
