@@ -24,3 +24,6 @@ node_modules/
 
 # OS
 .DS_Store
+
+# E2E test data (keep out of git)
+e2e_test_efs/**
