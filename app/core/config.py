@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     database_ssl: bool = Field(default=False, validation_alias=AliasChoices("DATABASE_SSL", "DB_SSL"))
     openai_api_key: str = ""
     openai_chat_model: str = "gpt-4o-mini"
+    # 쿼리 임베딩용. product.embedding_vector 저장 시 사용한 모델과 동일해야 함 (기본 1536차원, DB VECTOR(1536)).
     openai_embedding_model: str = "text-embedding-3-small"
     recommend_top_k: int = 3
     cache_ttl_days: int = 7
@@ -32,6 +33,10 @@ class Settings(BaseSettings):
     kafka_consumer_enabled: bool = False
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_analysis_request_topic: str = "analysis.request.v1"
+    kafka_recommendation_topic: str = Field(
+        default="recommendation",
+        validation_alias=AliasChoices("KAFKA_RECOMMENDATION_TOPIC", "RECOMMENDATION_TOPIC"),
+    )
     kafka_consumer_group_id: str = "counseling-analytics-consumer"
     kafka_auto_offset_reset: str = "earliest"
     kafka_batch_size: int = 1000
