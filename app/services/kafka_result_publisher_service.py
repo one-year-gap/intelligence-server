@@ -4,6 +4,7 @@ from typing import Any
 from aiokafka import AIOKafkaProducer
 
 from app.core.config import Settings
+from app.infra.kafka.client_options import build_kafka_client_options
 
 
 class KafkaResultPublisherService:
@@ -12,11 +13,10 @@ class KafkaResultPublisherService:
         self._producer: AIOKafkaProducer | None = None
 
     async def start(self) -> None:
-        bootstrap_servers = [s.strip() for s in self._settings.kafka_bootstrap_servers.split(",") if s.strip()]
         self._producer = AIOKafkaProducer(
-            bootstrap_servers=bootstrap_servers,
             key_serializer=lambda value: value.encode("utf-8"),
             value_serializer=lambda value: json.dumps(value, ensure_ascii=False).encode("utf-8"),
+            **build_kafka_client_options(self._settings),
         )
         try:
             await self._producer.start()

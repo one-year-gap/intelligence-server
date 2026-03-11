@@ -9,6 +9,7 @@ from asyncpg import Pool
 from pydantic import ValidationError
 
 from app.core.config import Settings
+from app.infra.kafka.client_options import build_kafka_client_options
 from app.infra.postgres.analysis_repository import AnalysisRepository
 from app.infra.postgres.client import create_postgres_pool
 from app.infra.postgres.dispatch_outbox_repository import DispatchOutboxRepository
@@ -51,11 +52,11 @@ class KafkaAnalysisConsumerService:
 
             self._consumer = AIOKafkaConsumer(
                 self._settings.kafka_analysis_request_topic,
-                bootstrap_servers=[s.strip() for s in self._settings.kafka_bootstrap_servers.split(",") if s.strip()],
                 group_id=self._settings.kafka_consumer_group_id,
                 auto_offset_reset=self._settings.kafka_auto_offset_reset,
                 enable_auto_commit=False,
                 value_deserializer=lambda v: json.loads(v.decode("utf-8")),
+                **build_kafka_client_options(self._settings),
             )
             await self._consumer.start()
             self._stop_event.clear()
