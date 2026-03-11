@@ -13,6 +13,8 @@ from app.infra.postgres.analysis_repository import AnalysisRepository
 from app.infra.postgres.client import create_postgres_pool
 from app.infra.postgres.dispatch_outbox_repository import DispatchOutboxRepository
 from app.schemas.analysis_request_message import AnalysisRequestMessage
+from app.services.analysis_outcome_service import AnalysisOutcomeService
+from app.services.kafka_result_publisher_service import KafkaResultPublisherService
 from app.services.sql_keyword_analysis_service import SqlKeywordAnalysisService
 
 logger = logging.getLogger(__name__)
@@ -26,34 +28,49 @@ class KafkaAnalysisConsumerService:
         self._analysis_repository: AnalysisRepository | None = None
         self._outbox_repository: DispatchOutboxRepository | None = None
         self._analysis_service: SqlKeywordAnalysisService | None = None
+        self._analysis_outcome_service: AnalysisOutcomeService | None = None
+        self._result_publisher: KafkaResultPublisherService | None = None
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
+        self._started = False
+        self._last_error: str | None = None
 
     async def start(self) -> None:
         if not self._settings.kafka_consumer_enabled:
             logger.info("Kafka consumer is disabled. (KAFKA_CONSUMER_ENABLED=false)")
             return
 
-        self._db_pool = await create_postgres_pool(self._settings)
-        self._analysis_repository = AnalysisRepository(self._db_pool)
-        self._outbox_repository = DispatchOutboxRepository(self._db_pool)
-        self._analysis_service = SqlKeywordAnalysisService()
+        try:
+            self._db_pool = await create_postgres_pool(self._settings)
+            self._analysis_repository = AnalysisRepository(self._db_pool)
+            self._outbox_repository = DispatchOutboxRepository(self._db_pool)
+            self._analysis_service = SqlKeywordAnalysisService()
+            self._analysis_outcome_service = AnalysisOutcomeService(self._settings.kafka_log_result_limit)
+            self._result_publisher = KafkaResultPublisherService(self._settings)
+            await self._result_publisher.start()
 
-        self._consumer = AIOKafkaConsumer(
-            self._settings.kafka_analysis_request_topic,
-            bootstrap_servers=[s.strip() for s in self._settings.kafka_bootstrap_servers.split(",") if s.strip()],
-            group_id=self._settings.kafka_consumer_group_id,
-            auto_offset_reset=self._settings.kafka_auto_offset_reset,
-            enable_auto_commit=False,
-            value_deserializer=lambda v: json.loads(v.decode("utf-8")),
-        )
-        await self._consumer.start()
-        self._stop_event.clear()
-        self._task = asyncio.create_task(self._consume_loop(), name="kafka-analysis-consumer")
+            self._consumer = AIOKafkaConsumer(
+                self._settings.kafka_analysis_request_topic,
+                bootstrap_servers=[s.strip() for s in self._settings.kafka_bootstrap_servers.split(",") if s.strip()],
+                group_id=self._settings.kafka_consumer_group_id,
+                auto_offset_reset=self._settings.kafka_auto_offset_reset,
+                enable_auto_commit=False,
+                value_deserializer=lambda v: json.loads(v.decode("utf-8")),
+            )
+            await self._consumer.start()
+            self._stop_event.clear()
+            self._task = asyncio.create_task(self._consume_loop(), name="kafka-analysis-consumer")
+            self._started = True
+            self._last_error = None
+        except Exception as error:
+            self._last_error = str(error)
+            await self.stop()
+            raise
 
         logger.info(
-            "Kafka consumer started. topic=%s group=%s batch_size=%d",
+            "Kafka consumer started. request_topic=%s response_topic=%s group=%s batch_size=%d",
             self._settings.kafka_analysis_request_topic,
+            self._settings.kafka_analysis_response_topic,
             self._settings.kafka_consumer_group_id,
             self._settings.kafka_batch_size,
         )
@@ -70,6 +87,9 @@ class KafkaAnalysisConsumerService:
         if self._consumer:
             await self._consumer.stop()
             self._consumer = None
+        if self._result_publisher:
+            await self._result_publisher.stop()
+            self._result_publisher = None
 
         if self._db_pool:
             await self._db_pool.close()
@@ -77,8 +97,33 @@ class KafkaAnalysisConsumerService:
         self._analysis_repository = None
         self._outbox_repository = None
         self._analysis_service = None
+        self._analysis_outcome_service = None
+        self._started = False
 
         logger.info("Kafka consumer stopped.")
+
+    def readiness_payload(self) -> dict[str, Any]:
+        checks = {
+            "consumerStarted": self._consumer is not None,
+            "publisherStarted": self._result_publisher is not None,
+            "backgroundLoopRunning": self._task is not None and not self._task.done(),
+            "dbPoolReady": self._db_pool is not None,
+        }
+        ready = all(checks.values()) and self._last_error is None
+        return {
+            "status": "ready" if ready else "not-ready",
+            "ready": ready,
+            "checks": checks,
+            "error": self._last_error,
+        }
+
+    def health_payload(self) -> dict[str, Any]:
+        return {
+            "status": "ok" if self._started else "starting",
+            "consumerEnabled": self._settings.kafka_consumer_enabled,
+            "ready": self.readiness_payload()["ready"],
+            "error": self._last_error,
+        }
 
     async def _consume_loop(self) -> None:
         assert self._consumer is not None
@@ -115,9 +160,12 @@ class KafkaAnalysisConsumerService:
                     await self._consumer.commit()
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as error:
+                self._last_error = str(error)
                 logger.error("Kafka consume loop failed. retry after short backoff.", exc_info=True)
                 await asyncio.sleep(1.0)
+            else:
+                self._last_error = None
 
     def _parse_message(self, payload: Any) -> AnalysisRequestMessage | None:
         try:
@@ -134,10 +182,11 @@ class KafkaAnalysisConsumerService:
         assert self._analysis_repository is not None
         assert self._outbox_repository is not None
         assert self._analysis_service is not None
+        assert self._analysis_outcome_service is not None
+        assert self._result_publisher is not None
 
         unique_request_ids = list(dict.fromkeys(msg.dispatch_request_id for msg in batch))
-        acked_request_ids = await self._outbox_repository.mark_acked_by_request_ids(unique_request_ids)
-        acked_count = len(acked_request_ids)
+        outbox_metadata_by_request_id = await self._outbox_repository.load_metadata_by_request_ids(unique_request_ids)
 
         unique_pairs = list(dict.fromkeys((msg.case_id, msg.analyzer_version) for msg in batch))
         case_ids = [pair[0] for pair in unique_pairs]
@@ -152,33 +201,69 @@ class KafkaAnalysisConsumerService:
         keyword_rows = await self._analysis_repository.load_active_keyword_rows()
         keyword_dict_rows = [dict(row) for row in keyword_rows]
         self._analysis_service.load_dictionary(keyword_dict_rows)
-        keyword_name_by_id: dict[int, str] = {}
+        keyword_info_by_id: dict[int, dict[str, str]] = {}
         for row in keyword_dict_rows:
             keyword_id = int(row["business_keyword_id"])
-            if keyword_id not in keyword_name_by_id:
-                keyword_name_by_id[keyword_id] = str(row["keyword_name"])
+            if keyword_id not in keyword_info_by_id:
+                keyword_info_by_id[keyword_id] = {
+                    "keywordCode": str(row["keyword_code"]),
+                    "keywordName": str(row["keyword_name"]),
+                }
 
         targets = [dict(row) for row in target_rows]
         mapping_rows, completed_ids, failed_items = self._analysis_service.analyze_targets(targets)
-        # DB write 권한은 Spring에만 있으므로 Python에서는 결과를 DB에 반영하지 않는다.
-        # (business_keyword_mapping_result INSERT, consultation_analysis status UPDATE 미수행)
+        outcomes = self._analysis_outcome_service.build_message_outcomes(
+            batch=batch,
+            target_by_pair=target_by_pair,
+            outbox_metadata_by_request_id=outbox_metadata_by_request_id,
+            mapping_rows=mapping_rows,
+            completed_ids=completed_ids,
+            failed_items=failed_items,
+            keyword_info_by_id=keyword_info_by_id,
+        )
+
+        published_count = 0
+        for outcome in outcomes:
+            request_id = str(outcome["dispatchRequestId"])
+            analysis_status = self._to_outbox_analysis_status(str(outcome["status"]))
+            prepared = await self._outbox_repository.prepare_response_dispatch(request_id, analysis_status)
+            if not prepared:
+                logger.info("Response dispatch skipped. request_id=%s reason=already-acked-or-missing", request_id)
+                continue
+
+            try:
+                await self._result_publisher.publish_response_message(outcome)
+                published_count += 1
+            except Exception as error:
+                next_status = await self._outbox_repository.mark_response_retry(
+                    request_id=request_id,
+                    last_error=str(error),
+                    max_attempts=self._settings.kafka_response_max_attempts,
+                    analysis_status=analysis_status,
+                )
+                logger.warning(
+                    "Response publish failed. request_id=%s next_status=%s error=%s",
+                    request_id,
+                    next_status,
+                    error,
+                )
+                raise
 
         if self._settings.kafka_log_each_message:
             self._log_message_outcomes(
                 batch=batch,
-                acked_request_ids=acked_request_ids,
                 target_by_pair=target_by_pair,
                 mapping_rows=mapping_rows,
                 completed_ids=completed_ids,
                 failed_items=failed_items,
-                keyword_name_by_id=keyword_name_by_id,
+                keyword_name_by_id={key: value["keywordName"] for key, value in keyword_info_by_id.items()},
             )
 
         logger.info(
-            "Kafka batch consumed. messages=%d unique_requests=%d acked=%d unique_pairs=%d loaded_targets=%d missing_pairs=%d completed=%d failed=%d mappings=%d (only-outbox-write=enabled)",
+            "Kafka batch consumed. messages=%d unique_requests=%d published=%d unique_pairs=%d loaded_targets=%d missing_pairs=%d completed=%d failed=%d mappings=%d",
             len(batch),
             len(unique_request_ids),
-            acked_count,
+            published_count,
             len(unique_pairs),
             len(target_rows),
             len(missing_pairs),
@@ -187,10 +272,15 @@ class KafkaAnalysisConsumerService:
             len(mapping_rows),
         )
 
+    def _to_outbox_analysis_status(self, status: str) -> str:
+        return {
+            "COMPLETED": "COMPLETED",
+            "FAILED": "FAILED",
+        }.get(status, "READY")
+
     def _log_message_outcomes(
         self,
         batch: list[AnalysisRequestMessage],
-        acked_request_ids: set[str],
         target_by_pair: dict[tuple[int, int], Any],
         mapping_rows: list[tuple[int, int, int]],
         completed_ids: list[int],
@@ -218,15 +308,13 @@ class KafkaAnalysisConsumerService:
         for message in batch:
             pair = (message.case_id, message.analyzer_version)
             target = target_by_pair.get(pair)
-            acked = message.dispatch_request_id in acked_request_ids
 
             if target is None:
                 logger.info(
-                    "Kafka message outcome. request_id=%s case_id=%d analyzer_version=%d acked=%s status=MISSING_TARGET analysis_id=- keyword_types=0 keyword_hits=0",
+                    "Kafka message outcome. request_id=%s case_id=%d analyzer_version=%d status=MISSING_TARGET analysis_id=- keyword_types=0 keyword_hits=0",
                     message.dispatch_request_id,
                     message.case_id,
                     message.analyzer_version,
-                    acked,
                 )
                 continue
 
@@ -254,11 +342,10 @@ class KafkaAnalysisConsumerService:
             results_json = json.dumps(result_items, ensure_ascii=False)
 
             logger.info(
-                "Kafka message outcome. request_id=%s case_id=%d analyzer_version=%d acked=%s status=%s analysis_id=%d keyword_types=%d keyword_hits=%d results=%s error=%s",
+                "Kafka message outcome. request_id=%s case_id=%d analyzer_version=%d status=%s analysis_id=%d keyword_types=%d keyword_hits=%d results=%s error=%s",
                 message.dispatch_request_id,
                 message.case_id,
                 message.analyzer_version,
-                acked,
                 status,
                 analysis_id,
                 summary["keyword_types"],
