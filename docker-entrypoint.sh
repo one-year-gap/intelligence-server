@@ -44,6 +44,11 @@ run_realtime() {
   run_bg_and_wait uvicorn app.realtime.main:app --host "${APP_HOST}" --port "${APP_PORT}"
 }
 
+run_analysis_server() {
+  echo "[entrypoint] APP_MODE=analysis-server -> starting analysis server"
+  run_bg_and_wait uvicorn app.analysis_server.main:app --host "${APP_HOST}" --port "${APP_PORT}"
+}
+
 run_batch() {
   echo "[entrypoint] APP_MODE=batch -> running one-off batch"
   run_bg_and_wait python -m app.batch.main
@@ -54,11 +59,14 @@ case "${APP_MODE}" in
   realtime)
     run_realtime
     ;;
+  analysis-server)
+    run_analysis_server
+    ;;
   batch)
     run_batch
     ;;
   *)
-    echo "[entrypoint] Unknown APP_MODE: ${APP_MODE} (allowed: realtime|batch)"
+    echo "[entrypoint] Unknown APP_MODE: ${APP_MODE} (allowed: realtime|analysis-server|batch)"
     exit 2
     ;;
 esac

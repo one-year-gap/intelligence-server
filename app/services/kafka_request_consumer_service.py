@@ -8,6 +8,7 @@ from aiokafka.errors import CommitFailedError
 from pydantic import ValidationError
 
 from app.core.config import Settings
+from app.infra.kafka.client_options import build_kafka_client_options
 from app.schemas.analysis_request_message import AnalysisRequestMessage
 
 logger = logging.getLogger(__name__)
@@ -26,10 +27,8 @@ class KafkaRequestConsumerService:
         self._consumer: AIOKafkaConsumer | None = None
 
     async def start(self) -> None:
-        bootstrap_servers = [s.strip() for s in self._settings.kafka_bootstrap_servers.split(",") if s.strip()]
         self._consumer = AIOKafkaConsumer(
             self._settings.kafka_analysis_request_topic,
-            bootstrap_servers=bootstrap_servers,
             group_id=self._settings.kafka_consumer_group_id,
             auto_offset_reset=self._settings.kafka_auto_offset_reset,
             max_poll_interval_ms=self._settings.kafka_max_poll_interval_ms,
@@ -37,6 +36,7 @@ class KafkaRequestConsumerService:
             heartbeat_interval_ms=self._settings.kafka_heartbeat_interval_ms,
             enable_auto_commit=False,
             value_deserializer=lambda value: json.loads(value.decode("utf-8")),
+            **build_kafka_client_options(self._settings),
         )
         await self._consumer.start()
 
