@@ -11,8 +11,8 @@ class AnalysisOutcomeService:
     def build_message_outcomes(
         self,
         batch: list[AnalysisRequestMessage],
-        acked_request_ids: set[str],
         target_by_pair: dict[tuple[int, int], Any],
+        outbox_metadata_by_request_id: dict[str, dict[str, Any]],
         mapping_rows: list[tuple[int, int, int]],
         completed_ids: list[int],
         failed_items: list[tuple[int, str]],
@@ -42,19 +42,21 @@ class AnalysisOutcomeService:
         for message in batch:
             pair = (message.case_id, message.analyzer_version)
             target = target_by_pair.get(pair)
-            acked = message.dispatch_request_id in acked_request_ids
+            outbox_metadata = outbox_metadata_by_request_id.get(message.dispatch_request_id, {})
+            chunk_id = outbox_metadata.get("chunkId")
 
             if target is None:
                 outcomes.append(
                     {
+                        "type": "RESPONSE",
                         "schema": "analysis.response.v1",
                         "dispatchRequestId": message.dispatch_request_id,
+                        "chunkId": chunk_id,
                         "caseId": message.case_id,
                         "analyzerVersion": message.analyzer_version,
                         "analysisId": None,
                         "memberId": None,
                         "status": "MISSING_TARGET",
-                        "requestAcked": acked,
                         "keywordTypes": 0,
                         "keywordHits": 0,
                         "keywordCounts": [],
@@ -89,14 +91,15 @@ class AnalysisOutcomeService:
             ]
             outcomes.append(
                 {
+                    "type": "RESPONSE",
                     "schema": "analysis.response.v1",
                     "dispatchRequestId": message.dispatch_request_id,
+                    "chunkId": chunk_id,
                     "caseId": message.case_id,
                     "analyzerVersion": message.analyzer_version,
                     "analysisId": analysis_id,
                     "memberId": member_id,
                     "status": status,
-                    "requestAcked": acked,
                     "keywordTypes": summary["keywordTypes"],
                     "keywordHits": summary["keywordHits"],
                     "keywordCounts": keyword_counts,

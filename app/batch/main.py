@@ -10,6 +10,7 @@ from aiokafka import AIOKafkaConsumer
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.infra.kafka.client_options import build_kafka_client_options
 from app.infra.postgres.analysis_repository import AnalysisRepository
 from app.infra.postgres.client import create_postgres_pool
 from app.infra.postgres.dispatch_outbox_repository import DispatchOutboxRepository
@@ -32,11 +33,11 @@ async def run_once() -> int:
 
     consumer = AIOKafkaConsumer(
         settings.kafka_analysis_request_topic,
-        bootstrap_servers=[s.strip() for s in settings.kafka_bootstrap_servers.split(",") if s.strip()],
         group_id=settings.kafka_consumer_group_id,
         auto_offset_reset=settings.kafka_auto_offset_reset,
         enable_auto_commit=False,
         value_deserializer=lambda value: json.loads(value.decode("utf-8")),
+        **build_kafka_client_options(settings),
     )
 
     processed_count = 0
