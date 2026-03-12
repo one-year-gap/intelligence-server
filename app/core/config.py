@@ -37,12 +37,20 @@ class Settings(BaseSettings):
         default="recommendation",
         validation_alias=AliasChoices("KAFKA_RECOMMENDATION_TOPIC", "RECOMMENDATION_TOPIC"),
     )
+    kafka_analysis_response_topic: str = "analysis.response.v1"
     kafka_consumer_group_id: str = "counseling-analytics-consumer"
     kafka_auto_offset_reset: str = "earliest"
     kafka_batch_size: int = 1000
     kafka_poll_timeout_ms: int = 1000
     kafka_log_each_message: bool = False
     kafka_log_result_limit: int = 20
+    kafka_response_max_attempts: int = 3
+    kafka_security_protocol: str = Field(default="PLAINTEXT", validation_alias=AliasChoices("KAFKA_SECURITY_PROTOCOL"))
+    kafka_sasl_mechanism: str = Field(default="", validation_alias=AliasChoices("KAFKA_SASL_MECHANISM"))
+    kafka_aws_region: str = Field(default="", validation_alias=AliasChoices("KAFKA_AWS_REGION", "AWS_REGION", "AWS_DEFAULT_REGION"))
+    kafka_max_poll_interval_ms: int = Field(default=1800000, validation_alias=AliasChoices("KAFKA_MAX_POLL_INTERVAL_MS"))
+    kafka_session_timeout_ms: int = Field(default=60000, validation_alias=AliasChoices("KAFKA_SESSION_TIMEOUT_MS"))
+    kafka_heartbeat_interval_ms: int = Field(default=15000, validation_alias=AliasChoices("KAFKA_HEARTBEAT_INTERVAL_MS"))
 
     # PostgreSQL connection for bulk lookup
     postgres_dsn: str = Field(default="", validation_alias=AliasChoices("POSTGRES_DSN", "DB_DSN"))
