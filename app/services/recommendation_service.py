@@ -4,6 +4,8 @@ import re
 from datetime import datetime, timezone
 
 from aiokafka import AIOKafkaProducer
+
+logger = logging.getLogger(__name__)
 from openai import AsyncOpenAI
 from sqlalchemy import bindparam, text
 from sqlalchemy.exc import ProgrammingError
@@ -103,14 +105,14 @@ def _normalize_embedding_for_db(embedding: list[float]) -> list[float]:
     if len(embedding) == EMBEDDING_DIMENSION:
         return embedding
     if len(embedding) > EMBEDDING_DIMENSION:
-        logging.warning(
+        logger.warning(
             "임베딩 차원 초과: %d (기대 %d). 앞 %d개만 사용. product.embedding_vector와 동일 모델(openai_embedding_model) 사용 권장.",
             len(embedding),
             EMBEDDING_DIMENSION,
             EMBEDDING_DIMENSION,
         )
         return embedding[:EMBEDDING_DIMENSION]
-    logging.error(
+    logger.error(
         "임베딩 차원 부족: %d (기대 %d). openai_embedding_model이 text-embedding-3-small인지, product 인덱싱과 동일 모델인지 확인.",
         len(embedding),
         EMBEDDING_DIMENSION,
@@ -208,6 +210,12 @@ async def _generate_recommendation_reasons(
 응답은 반드시 JSON만 주세요. 예시: {{"reasons": ["이유1(2~3문장)", "이유2(2~3문장)", "이유3(2~3문장)"]}}
 """
     try:
+        logger.info(
+            "OpenAI Chat 호출 직전 (_generate_recommendation_reasons): model=%s product_count=%d prompt_len=%d",
+            model,
+            len(product_summaries),
+            len(prompt),
+        )
         resp = await client.chat.completions.create(
             model=model,
             messages=[
@@ -217,6 +225,11 @@ async def _generate_recommendation_reasons(
             temperature=0.3,
         )
         content = (resp.choices[0].message.content or "").strip()
+        logger.info(
+            "OpenAI Chat 성공 (_generate_recommendation_reasons): model=%s response_len=%d",
+            model,
+            len(content),
+        )
         m = re.search(r"\{[\s\S]*\}", content)
         if m:
             data = json.loads(m.group())
@@ -229,7 +242,21 @@ async def _generate_recommendation_reasons(
                     )
                 return processed[: len(product_summaries)]
     except (json.JSONDecodeError, KeyError, IndexError) as e:
-        logging.warning("LLM 추천 이유 파싱 실패, 기본 문구 사용: %s", e, exc_info=True)
+        logger.warning(
+            "LLM 추천 이유 파싱 실패, 기본 문구 사용: model=%s error_type=%s error=%s",
+            model,
+            type(e).__name__,
+            e,
+            exc_info=True,
+        )
+    except Exception as e:
+        logger.warning(
+            "OpenAI Chat API 실패 (_generate_recommendation_reasons): model=%s error_type=%s error=%s",
+            model,
+            type(e).__name__,
+            e,
+            exc_info=True,
+        )
     return ["고객님께 적합한 상품입니다."] * len(product_summaries)
 
 
@@ -355,6 +382,14 @@ async def _run_recommendation_with_context(
     # 1) ctx 기반 쿼리 텍스트와 임베딩 생성
     query_text = build_retrieval_query_text(ctx)
     exclude_ids = _exclude_ids_from_context(ctx)
+    emb_model = getattr(settings, "openai_embedding_model", "")
+    logger.info(
+        "OpenAI 임베딩 호출 직전: member_id=%s model=%s query_text_len=%d query_text_preview=%s",
+        member_id,
+        emb_model,
+        len(query_text or ""),
+        (query_text or "")[:80] + ("..." if len(query_text or "") > 80 else ""),
+    )
 
     # CHURN_RISK일 때 동일 product_type 기준 가격 상한용 (한 상품 vs 같은 타입 현재 가격)
     type_caps = await _get_subscription_max_price_by_type(session, ctx) if (ctx.get("segment") or "").strip().upper() == "CHURN_RISK" else {}
@@ -365,8 +400,21 @@ async def _run_recommendation_with_context(
             input=query_text,
         )
         query_vec = emb_resp.data[0].embedding
+        logger.info(
+            "OpenAI 임베딩 성공: member_id=%s model=%s dimension=%d",
+            member_id,
+            emb_model,
+            len(query_vec) if query_vec else 0,
+        )
     except Exception as e:
-        logging.warning("ctx 기반 임베딩 실패: %s", e, exc_info=True)
+        logger.warning(
+            "OpenAI 임베딩 실패 (ctx 경로): member_id=%s model=%s error_type=%s error=%s",
+            member_id,
+            emb_model,
+            type(e).__name__,
+            e,
+            exc_info=True,
+        )
         return None
     query_vec = _normalize_embedding_for_db(query_vec)
     if query_vec is None:
@@ -414,7 +462,7 @@ async def _run_recommendation_with_context(
         r = dict(row)
         id_to_row[r["product_id"]] = r
     products_ordered = [id_to_row[pid] for pid in product_ids if pid in id_to_row]
-    logging.info(
+    logger.info(
         "recommendation: ctx retrieval 완료 member_id=%s 후보=%d",
         member_id,
         len(products_ordered),
@@ -470,7 +518,17 @@ async def _run_recommendation_with_context(
         "]"
         "}"
     )
-    logging.info("recommendation: ctx LLM 호출 member_id=%s 상품=%d", member_id, len(products_ordered[:top_k]))
+    chat_model = getattr(settings, "openai_chat_model", "")
+    system_len = len(system_prompt + "\n\n" + json_instruction)
+    user_len = len(user_prompt or "")
+    logger.info(
+        "OpenAI Chat 호출 직전 (ctx 경로): member_id=%s model=%s system_len=%d user_len=%d products=%d",
+        member_id,
+        chat_model,
+        system_len,
+        user_len,
+        len(products_ordered[:top_k]),
+    )
     try:
         resp = await client.chat.completions.create(
             model=settings.openai_chat_model,
@@ -481,6 +539,12 @@ async def _run_recommendation_with_context(
             temperature=0.3,
         )
         content = (resp.choices[0].message.content or "").strip()
+        logger.info(
+            "OpenAI Chat 성공 (ctx 경로): member_id=%s model=%s response_len=%d",
+            member_id,
+            chat_model,
+            len(content),
+        )
         m = re.search(r"\{[\s\S]*\}", content)
         if not m:
             raise ValueError("JSON not found in response")
@@ -490,8 +554,28 @@ async def _run_recommendation_with_context(
             cached = "고객님의 이용 패턴과 관심사를 반영한 개인화 추천입니다."
         raw_list = data.get("recommended_products") or []
     except (json.JSONDecodeError, KeyError, ValueError) as e:
-        logging.warning("LLM JSON 파싱 실패, 폴백: %s", e, exc_info=True)
+        logger.warning(
+            "LLM JSON 파싱 실패 (ctx 경로), 폴백 사용: member_id=%s error_type=%s error=%s",
+            member_id,
+            type(e).__name__,
+            e,
+            exc_info=True,
+        )
         # 폴백: 상위 3개에 기본 reason
+        raw_list = [
+            {"product_id": p["product_id"], "reason": "고객님께 적합한 상품입니다."}
+            for p in products_ordered[:top_k]
+        ]
+        cached = "고객님의 이용 패턴과 관심사를 반영한 요금제·부가서비스 추천입니다."
+    except Exception as e:
+        logger.warning(
+            "OpenAI Chat API 호출 실패 (ctx 경로): member_id=%s model=%s error_type=%s error=%s",
+            member_id,
+            chat_model,
+            type(e).__name__,
+            e,
+            exc_info=True,
+        )
         raw_list = [
             {"product_id": p["product_id"], "reason": "고객님께 적합한 상품입니다."}
             for p in products_ordered[:top_k]
@@ -534,7 +618,7 @@ async def _run_fallback_recommendation(
     top_k: int,
 ) -> RecommendationResponse:
     """폴백: 새 세션(새 커넥션)에서 벡터 검색 + LLM. 중단된 트랜잭션 영향 없음."""
-    logging.info("recommendation: 폴백 시작 (고정 쿼리 벡터 검색) top_k=%s", top_k)
+    logger.info("recommendation: 폴백 시작 (고정 쿼리 벡터 검색) top_k=%s", top_k)
     if SessionLocal is None:
         return RecommendationResponse(
             segment=Segment.normal,
@@ -543,16 +627,32 @@ async def _run_fallback_recommendation(
             source="LIVE",
             updated_at=_utc_now_iso(),
         )
+    emb_model = getattr(settings, "openai_embedding_model", "")
     async with SessionLocal() as fallback_session:
         try:
+            logger.info(
+                "OpenAI 임베딩 호출 직전 (폴백): model=%s input_preview=%s",
+                emb_model,
+                (DEFAULT_RETRIEVAL_QUERY or "")[:60] + ("..." if len(DEFAULT_RETRIEVAL_QUERY or "") > 60 else ""),
+            )
             emb_resp = await client.embeddings.create(
                 model=settings.openai_embedding_model,
                 input=DEFAULT_RETRIEVAL_QUERY,
             )
             query_vec = emb_resp.data[0].embedding
-            logging.info("recommendation: 폴백 임베딩 완료")
+            logger.info(
+                "OpenAI 임베딩 성공 (폴백): model=%s dimension=%d",
+                emb_model,
+                len(query_vec) if query_vec else 0,
+            )
         except Exception as e:
-            logging.warning("recommendation: 폴백 임베딩 실패, 빈 추천 반환: %s", e, exc_info=True)
+            logger.warning(
+                "OpenAI 임베딩 실패 (폴백): model=%s error_type=%s error=%s",
+                emb_model,
+                type(e).__name__,
+                e,
+                exc_info=True,
+            )
             return RecommendationResponse(
                 segment=Segment.normal,
                 cached_llm_recommendation="[일시 오류] 추천을 생성하지 못했습니다.",
@@ -580,7 +680,7 @@ async def _run_fallback_recommendation(
         )
         rows = result.fetchall()
         product_ids = [r[0] for r in rows]
-        logging.info("recommendation: 폴백 벡터 검색 완료 product_ids=%s", product_ids[:10] if len(product_ids) > 10 else product_ids)
+        logger.info("recommendation: 폴백 벡터 검색 완료 product_ids=%s", product_ids[:10] if len(product_ids) > 10 else product_ids)
         if not product_ids:
             return RecommendationResponse(
                 segment=Segment.normal,
@@ -609,7 +709,7 @@ async def _run_fallback_recommendation(
             f"{p.get('name') or ''} (product_id={p.get('product_id')})"
             for p in products_ordered
         ]
-        logging.info("recommendation: 폴백 LLM reason 생성 요청 상품=%d", len(summaries))
+        logger.info("recommendation: 폴백 LLM reason 생성 요청 상품=%d", len(summaries))
         reasons = await _generate_recommendation_reasons(
             client,
             settings.openai_chat_model,
@@ -645,7 +745,7 @@ async def run_recommendation_and_publish_to_kafka(member_id: int) -> None:
         resp = await get_recommendation(session=None, member_id=member_id)
         await publish_recommendation_to_kafka(member_id, resp)
     except Exception as e:
-        logging.error("recommendation: 백그라운드 추천/Kafka 실패 member_id=%s: %s", member_id, e, exc_info=True)
+        logger.error("recommendation: 백그라운드 추천/Kafka 실패 member_id=%s: %s", member_id, e, exc_info=True)
 
 
 async def publish_recommendation_to_kafka(
@@ -657,7 +757,7 @@ async def publish_recommendation_to_kafka(
     topic = getattr(settings, "kafka_recommendation_topic", "recommendation")
     bootstrap = getattr(settings, "kafka_bootstrap_servers", "").strip()
     if not bootstrap:
-        logging.warning("recommendation: Kafka 미설정, 발행 스킵 member_id=%s", member_id)
+        logger.warning("recommendation: Kafka 미설정, 발행 스킵 member_id=%s", member_id)
         return
     payload = {"memberId": member_id, **response.model_dump(by_alias=True)}
     producer = AIOKafkaProducer(
@@ -667,9 +767,9 @@ async def publish_recommendation_to_kafka(
     try:
         await producer.start()
         await producer.send_and_wait(topic, value=payload, key=str(member_id).encode("utf-8"))
-        logging.info("recommendation: Kafka 발행 완료 member_id=%s topic=%s", member_id, topic)
+        logger.info("recommendation: Kafka 발행 완료 member_id=%s topic=%s", member_id, topic)
     except Exception as e:
-        logging.error("recommendation: Kafka 발행 실패 member_id=%s: %s", member_id, e, exc_info=True)
+        logger.error("recommendation: Kafka 발행 실패 member_id=%s: %s", member_id, e, exc_info=True)
     finally:
         await producer.stop()
 
@@ -704,14 +804,14 @@ class RecommendationService:
             )
             row = ctx_result.fetchone()
             if row is None:
-                logging.info(
+                logger.info(
                     "recommendation: member_llm_context 행 없음 (member_id=%s). 테이블은 있으나 해당 회원 데이터 없음 → 폴백",
                     member_id,
                 )
                 return None
             return dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
         except (ProgrammingError, Exception) as e:
-            logging.info(
+            logger.info(
                 "recommendation: member_llm_context 조회 실패 → 폴백 예정 (member_id=%s, error=%s)",
                 member_id,
                 e,
@@ -759,11 +859,11 @@ class RecommendationService:
         2) ctx가 있으면 ctx 기반 RAG 추천을 시도한다.
         3) ctx가 없거나 ctx 경로에서 실패하면 폴백 벡터 검색 + LLM 경로로 추천을 생성한다.
         """
-        logging.info("recommendation: 요청 시작 member_id=%s", member_id)
+        logger.info("recommendation: 요청 시작 member_id=%s", member_id)
         top_k = getattr(self.settings, "recommend_top_k", 3)
 
         if SessionLocal is None:
-            logging.warning("recommendation: DB 미설정, 빈 응답 반환 member_id=%s", member_id)
+            logger.warning("recommendation: DB 미설정, 빈 응답 반환 member_id=%s", member_id)
             return RecommendationResponse(
                 segment=Segment.normal,
                 cached_llm_recommendation="DB가 설정되지 않았습니다.",
@@ -776,7 +876,7 @@ class RecommendationService:
             ctx: dict | None = await self._load_member_context(worker_session, member_id)
 
             if ctx:
-                logging.info(
+                logger.info(
                     "recommendation: member_llm_context 사용 (member_id=%s, segment=%s, persona=%s)",
                     member_id,
                     (ctx.get("segment") or "").strip(),
@@ -789,7 +889,7 @@ class RecommendationService:
                         ctx=ctx,
                     )
                     if resp is not None:
-                        logging.info(
+                        logger.info(
                             "recommendation: ctx 경로 완료 member_id=%s segment=%s products=%s",
                             member_id,
                             resp.segment.value,
@@ -797,7 +897,7 @@ class RecommendationService:
                         )
                         return resp
                 except Exception as e:
-                    logging.info(
+                    logger.info(
                         "recommendation: ctx 기반 추천 실패 → 폴백 (member_id=%s, error=%s)",
                         member_id,
                         e,
@@ -807,12 +907,12 @@ class RecommendationService:
                     except Exception:
                         pass
 
-        logging.info(
+        logger.info(
             "recommendation: 폴백 경로 진입 (member_llm_context 없음 또는 ctx 추천 실패, member_id=%s)",
             member_id,
         )
         resp = await self._run_fallback(top_k=top_k)
-        logging.info(
+        logger.info(
             "recommendation: 폴백 경로 완료 member_id=%s segment=%s products=%s",
             member_id,
             resp.segment.value,
@@ -833,6 +933,43 @@ async def get_recommendation(
     """
     _ = session
     settings = get_settings()
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    api_key = getattr(settings, "openai_api_key", "") or ""
+    has_key = bool(api_key and api_key.strip())
+    logger.info(
+        "get_recommendation: 진입 member_id=%s openai_api_key_set=%s openai_embedding_model=%s openai_chat_model=%s",
+        member_id,
+        has_key,
+        getattr(settings, "openai_embedding_model", ""),
+        getattr(settings, "openai_chat_model", ""),
+    )
+    if not has_key:
+        logger.error(
+            "get_recommendation: OPENAI_API_KEY 미설정. .env 또는 환경변수 OPENAI_API_KEY 확인 필요. member_id=%s",
+            member_id,
+        )
+        return RecommendationResponse(
+            segment=Segment.normal,
+            cached_llm_recommendation="[설정 오류] OpenAI API 키가 설정되지 않았습니다.",
+            recommended_products=[],
+            source="LIVE",
+            updated_at=_utc_now_iso(),
+        )
+
+    client = AsyncOpenAI(api_key=api_key)
     service = RecommendationService(settings=settings, client=client)
-    return await service.recommend_for_member(member_id)
+    try:
+        return await service.recommend_for_member(member_id)
+    except Exception as e:
+        logger.exception(
+            "get_recommendation: OpenAI 또는 추천 파이프라인 예외 member_id=%s error_type=%s error=%s",
+            member_id,
+            type(e).__name__,
+            e,
+        )
+        return RecommendationResponse(
+            segment=Segment.normal,
+            cached_llm_recommendation="[일시 오류] 추천을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.(openai)",
+            recommended_products=[],
+            source="LIVE",
+            updated_at=_utc_now_iso(),
+        )
