@@ -1,0 +1,26 @@
+[
+  {
+    "published_file": "human-keyword-scores.json",
+    "original_relative_path": "runs/human_keywords_v1/keyword_scores.json",
+    "original_sha256": "aed6a0d618c0871a7da7cab7ad3a68005151b1d0ef755fc7235c8a55abe4e7a6",
+    "transformation": "Remove per-case details; operational report retains only aggregate fields. No metric recalculation."
+  },
+  {
+    "published_file": "human-run-summary.json",
+    "original_relative_path": "runs/human_keywords_v1/summary.json",
+    "original_sha256": "b59b543510094b244c2912773d2906ea8dcdbb5e6c5a846a52daa33d4aea67a1",
+    "transformation": "Remove per-case details; operational report retains only aggregate fields. No metric recalculation."
+  },
+  {
+    "published_file": "catalog-replay-summary.json",
+    "original_relative_path": "runs/catalog_v3/summary.json",
+    "original_sha256": "893cd295a08e13019e07fe3a002081e5f0594b9c62419823e82efbd88ceceb81",
+    "transformation": "Remove per-case details; operational report retains only aggregate fields. No metric recalculation."
+  },
+  {
+    "published_file": "operational-before-after.json",
+    "original_relative_path": "evidence/operational_before_after.json",
+    "original_sha256": "a1c56b907ce671e76779fa98734ceb37b7e16f99bb9103fa52062bb916895ea5",
+    "transformation": "Remove per-case details; operational report retains only aggregate fields. No metric recalculation."
+  }
+]
