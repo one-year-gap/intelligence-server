@@ -1,0 +1,95 @@
+{
+  "cases": 50,
+  "arms": {
+    "single": {
+      "structural_valid": 50,
+      "validated_status": 49,
+      "review_required": 1,
+      "estimated_usd": 0.0174957,
+      "uncached_usd": 0.0285837,
+      "logical_model_calls": 50,
+      "tool_calls": 0,
+      "tool_errors": 0,
+      "mean_logical_request_seconds": 0.9998336233012378,
+      "mean_current_elapsed_seconds": 0.27881030757998815,
+      "tool_seconds": 0,
+      "stop_reasons": {
+        "single_completed": 50
+      }
+    },
+    "fixed": {
+      "structural_valid": 50,
+      "validated_status": 47,
+      "review_required": 3,
+      "estimated_usd": 0.0216285,
+      "uncached_usd": 0.0357501,
+      "logical_model_calls": 62,
+      "tool_calls": 0,
+      "tool_errors": 0,
+      "mean_logical_request_seconds": 1.2173710166415548,
+      "mean_current_elapsed_seconds": 0.48350175003812185,
+      "tool_seconds": 0,
+      "stop_reasons": {
+        "no_review_signal": 38,
+        "fixed_completed": 12
+      }
+    },
+    "budget_review": {
+      "structural_valid": 50,
+      "validated_status": 47,
+      "review_required": 3,
+      "estimated_usd": 0.029965049999999997,
+      "uncached_usd": 0.05073945,
+      "logical_model_calls": 86,
+      "tool_calls": 0,
+      "tool_errors": 0,
+      "mean_logical_request_seconds": 1.6767308058022172,
+      "mean_current_elapsed_seconds": 0.9213408549604355,
+      "tool_seconds": 0,
+      "stop_reasons": {
+        "no_review_signal": 38,
+        "budget_review_completed": 12
+      }
+    },
+    "adaptive": {
+      "structural_valid": 50,
+      "validated_status": 47,
+      "review_required": 3,
+      "estimated_usd": 0.023436899999999997,
+      "uncached_usd": 0.0374337,
+      "logical_model_calls": 64,
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "mean_logical_request_seconds": 1.2846497933019418,
+      "mean_current_elapsed_seconds": 0.5065559900004882,
+      "tool_seconds": 0.017832458994234912,
+      "stop_reasons": {
+        "no_review_signal": 38,
+        "adaptive_completed": 11,
+        "model_call_limit": 1
+      }
+    }
+  },
+  "human_gold_verified": 0,
+  "actual_success_receipt_cost_usd": 0.04003905,
+  "actual_success_calls": 112,
+  "uncertain_calls": 0,
+  "fairness": {
+    "same_initial_payload_and_response": true,
+    "shared_final_contract": true,
+    "complete_input_and_dictionary_all_arms": true,
+    "equal_max_model_calls_for_budget_review_and_adaptive": true,
+    "same_actual_token_budget": false
+  },
+  "limitations": [
+    "Shared initial completion design; logical arm costs include the reused base receipt",
+    "Request seconds include historical shared receipt latency; current elapsed excludes MCP session startup",
+    "No human semantic gold; authored regression checks are development-only",
+    "Equal call ceilings are not equal realized token spend"
+  ],
+  "usefulness_gate": {
+    "passed": false,
+    "status": "pending_external_evidence_review",
+    "reason": "Structural metrics and authored development constraints alone do not establish useful adaptive-agent superiority or semantic accuracy."
+  }
+}

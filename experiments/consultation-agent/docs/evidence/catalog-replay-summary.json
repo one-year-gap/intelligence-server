@@ -1,0 +1,31 @@
+{
+  "cases": 50,
+  "before": {
+    "structural_valid": 50,
+    "review_required": 0,
+    "model_calls": 82,
+    "tool_calls": 16,
+    "estimated_usd": 0.0571458,
+    "uncached_usd": 0.0703266
+  },
+  "after": {
+    "structural_valid": 50,
+    "review_required": 2,
+    "model_calls": 67,
+    "tool_calls": 1,
+    "estimated_usd": 0.0482058,
+    "uncached_usd": 0.0559338
+  },
+  "labels_changed": 2,
+  "human_gold": 0,
+  "incremental_new_success_calls": 17,
+  "incremental_new_estimated_usd": 0.013293749999999998,
+  "imported_base_calls": 50,
+  "same_initial_responses": true,
+  "semantic_quality_change": "unknown",
+  "limitations": [
+    "Previously used development data",
+    "One replay per intervention; review-generation stochasticity not separated",
+    "No semantic accuracy or 2000-case gate pass"
+  ]
+}

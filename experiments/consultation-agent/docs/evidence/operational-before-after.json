@@ -1,0 +1,26 @@
+{
+  "kind": "deterministic_injected_fault_test",
+  "real_llm_calls": 0,
+  "consultation_fixture_count": 1,
+  "conditions": 5,
+  "known_receipt_summary": {
+    "final_only": {
+      "cases": 4,
+      "completed": 4,
+      "model_calls": 18,
+      "tool_calls": 6
+    },
+    "step_receipts": {
+      "cases": 4,
+      "completed": 4,
+      "model_calls": 12,
+      "tool_calls": 4
+    }
+  },
+  "limitations": [
+    "Scripted identical model and tools; not semantic accuracy",
+    "Final-only baseline models checkpoint placement, not a full historical release benchmark",
+    "Unknown in-flight response stops rather than claiming exactly-once API execution",
+    "Not a 2000-case run or production outage measurement"
+  ]
+}

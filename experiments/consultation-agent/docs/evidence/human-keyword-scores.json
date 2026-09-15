@@ -1,0 +1,106 @@
+{
+  "label_source": "user-attested human labels, original unmodified",
+  "cases": 50,
+  "delivered_keywords_primary": {
+    "single": {
+      "cases": 50,
+      "tp": 100,
+      "fp": 35,
+      "fn": 27,
+      "micro_precision": 0.7407407407407407,
+      "micro_recall": 0.7874015748031497,
+      "micro_f1": 0.7633587786259542,
+      "exact_matches": 12,
+      "review_required": 1
+    },
+    "fixed": {
+      "cases": 50,
+      "tp": 95,
+      "fp": 33,
+      "fn": 32,
+      "micro_precision": 0.7421875,
+      "micro_recall": 0.7480314960629921,
+      "micro_f1": 0.7450980392156863,
+      "exact_matches": 12,
+      "review_required": 3
+    },
+    "budget_review": {
+      "cases": 50,
+      "tp": 95,
+      "fp": 33,
+      "fn": 32,
+      "micro_precision": 0.7421875,
+      "micro_recall": 0.7480314960629921,
+      "micro_f1": 0.7450980392156863,
+      "exact_matches": 12,
+      "review_required": 3
+    },
+    "adaptive": {
+      "cases": 50,
+      "tp": 95,
+      "fp": 33,
+      "fn": 32,
+      "micro_precision": 0.7421875,
+      "micro_recall": 0.7480314960629921,
+      "micro_f1": 0.7450980392156863,
+      "exact_matches": 12,
+      "review_required": 3
+    }
+  },
+  "raw_keywords_secondary": {
+    "single": {
+      "cases": 50,
+      "tp": 101,
+      "fp": 37,
+      "fn": 26,
+      "micro_precision": 0.7318840579710145,
+      "micro_recall": 0.7952755905511811,
+      "micro_f1": 0.7622641509433963,
+      "exact_matches": 12,
+      "review_required": 0
+    },
+    "fixed": {
+      "cases": 50,
+      "tp": 101,
+      "fp": 37,
+      "fn": 26,
+      "micro_precision": 0.7318840579710145,
+      "micro_recall": 0.7952755905511811,
+      "micro_f1": 0.7622641509433963,
+      "exact_matches": 12,
+      "review_required": 0
+    },
+    "budget_review": {
+      "cases": 50,
+      "tp": 101,
+      "fp": 37,
+      "fn": 26,
+      "micro_precision": 0.7318840579710145,
+      "micro_recall": 0.7952755905511811,
+      "micro_f1": 0.7622641509433963,
+      "exact_matches": 12,
+      "review_required": 0
+    },
+    "adaptive": {
+      "cases": 50,
+      "tp": 101,
+      "fp": 37,
+      "fn": 26,
+      "micro_precision": 0.7318840579710145,
+      "micro_recall": 0.7952755905511811,
+      "micro_f1": 0.7622641509433963,
+      "exact_matches": 12,
+      "review_required": 0
+    }
+  },
+  "sentiment_accuracy": null,
+  "sentiment_reason": "original labels conflict with user-confirmed definition; AI proposals not approved gold",
+  "usefulness_gate": false,
+  "limitations": [
+    "50 designed cases, no proven population representativeness",
+    "prior tuning exposure and complete keyword annotation rubric unverified",
+    "shared initial completion; one stochastic follow-up run",
+    "held cases deliver no labels in primary metric; raw keyword scores also shown",
+    "known-success API cost excludes uncertain archived sandbox attempt"
+  ]
+}
