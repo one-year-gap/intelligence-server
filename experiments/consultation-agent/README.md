@@ -50,3 +50,8 @@ python3 -m venv .venv
 준비 단계는 API를 호출하지 않는다. 실행은 최대 50건으로 제한한다. `run_human50.py`는 별도로 동결한 `runs/human_keywords_v1`이 있어야 하며, 원자료 없이 실행할 수 없다. `replay_catalog.py`는 완료된 `runs/development_v2`의 최초 응답 50개를 재사용한다.
 
 원본 실험의 코드 스냅샷 해시는 원본에 대한 기록이다. 경로 정리 후 코드는 해시가 달라지므로 과거 실행의 protocol을 그대로 재사용하지 않는다. 새 실행을 준비하면 현재 소스와 입력으로 새 해시가 만들어진다.
+
+## 결과와 검증 기록
+
+- [비교 결과와 한계](docs/RESULTS.md)
+- [테스트 성공·실패 기록](docs/TESTS.md)
